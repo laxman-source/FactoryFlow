@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from factoryflow import data
+
 
 APP = Path(__file__).parent.parent / "app.py"
 
@@ -57,6 +59,9 @@ def test_documented_scenarios_show_engine_builds_revisions_and_stock(
     )
     assert int(metric(app, "ECN simulated builds")) == total
     assert int(metric(app, "ECN unfinished units")) == unfinished
+    outstanding = table(app, "Outstanding demand")
+    assert len(outstanding) == 1
+    assert outstanding.iloc[0]["Outstanding demand"] == unfinished
 
     stock = table(app, "Closing physical")
     closing = stock.groupby("Component SKU").last()
@@ -110,6 +115,7 @@ def test_excess_old_stock_is_held_physically_not_scrapped():
     old = old.loc[old["Component SKU"] == "LED-100"].iloc[-1]
     assert (old["Closing physical"], old["Closing held"],
             old["Closing usable"]) == (8, 8, 0)
+    assert (old["Reserved at snapshot"], old["Protected safety stock"]) == (0, 0)
     disposition = table(app, "Automatic stock change")
     assert disposition.iloc[0]["Automatic stock change"] == False
 
@@ -145,6 +151,77 @@ def test_factory_plan_preserves_no_ecn_view_and_shared_component_priority():
     screws = stock.loc[stock["Component SKU"] == "SCR-120"]
     assert screws["Simulated use"].sum() == 880
     assert screws.iloc[-1]["Closing usable"] == 20
+
+
+def test_factory_backlog_is_shown_once_per_product_not_on_revision_rows():
+    app = dashboard()
+    revision = table(app, "BOM revision")
+    assert revision.columns.tolist() == [
+        "Product SKU", "BOM revision", "Simulated builds",
+    ]
+    assert revision.set_index(["Product SKU", "BOM revision"])[
+        "Simulated builds"
+    ].to_dict() == {
+        ("FG-CHARGER-02", "A"): 100,
+        ("FG-LAMP-01", "A"): 150,
+        ("FG-LAMP-01", "B"): 0,
+    }
+    outstanding = table(app, "Outstanding demand").set_index("Product SKU")
+    assert outstanding[["Product demand", "Simulated builds",
+                        "Outstanding demand"]].to_dict("index") == {
+        "FG-CHARGER-02": {
+            "Product demand": 100, "Simulated builds": 100,
+            "Outstanding demand": 0,
+        },
+        "FG-LAMP-01": {
+            "Product demand": 200, "Simulated builds": 150,
+            "Outstanding demand": 50,
+        },
+    }
+    assert outstanding["Outstanding demand"].sum() == 50
+    assert metric(app, "ECN simulated builds") == "250"
+    assert metric(app, "ECN unfinished units") == "50"
+
+
+def test_ecn_stock_table_shows_safety_stock_separately_from_holds():
+    app = dashboard()
+    stock = table(app, "Protected safety stock")
+    screws = stock.loc[stock["Component SKU"] == "SCR-120"].set_index("Date")
+    assert screws[["Opening usable", "Simulated use", "Closing usable",
+                   "Closing physical", "Reserved at snapshot",
+                   "Protected safety stock", "Closing held"]].to_numpy().tolist()[:2] == [
+        [900, 440, 460, 560, 0, 100, 0],
+        [460, 360, 100, 200, 0, 100, 0],
+    ]
+
+
+def test_stock_restrictions_are_sourced_from_inventory_not_balance_difference(
+    monkeypatch,
+):
+    inventory = [item.copy() for item in data.INVENTORY]
+    screws = next(item for item in inventory if item["sku"] == "SCR-120")
+    screws["reserved"] = 25
+    screws["safety_stock"] = 75
+    monkeypatch.setattr(data, "INVENTORY", inventory)
+    app = dashboard()
+    stock = table(app, "Protected safety stock")
+    screws = stock.loc[stock["Component SKU"] == "SCR-120"].iloc[0]
+    assert (screws["Reserved at snapshot"],
+            screws["Protected safety stock"]) == (25, 75)
+    assert screws["Closing physical"] - screws["Closing usable"] == 100
+    assert screws["Closing held"] == 0
+
+
+def test_purchase_advice_caption_limits_nominal_scope_without_changing_advice():
+    app = dashboard()
+    captions = " ".join(item.value for item in app.caption)
+    assert "nominal dated planning advice" in captions
+    assert "not orders or confirmed receipts" in captions
+    assert "may not cover unfinished demand carried beyond" in captions
+    assert "does not purchase stock automatically" in captions
+    assert "completion dates are not guaranteed" in captions
+    advice = table(app, "Dated shortage").set_index("Component SKU")
+    assert advice.loc["LED-101", "Suggested purchase units"] == 40
 
 
 def test_unconfirmed_new_receipt_cannot_support_builds():

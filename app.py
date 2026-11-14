@@ -844,7 +844,7 @@ if ecn_inputs is not None:
             "estimates remain in the separate Production capacity section."
         )
 
-        st.subheader("Production planning by BOM revision")
+        st.subheader("Simulated builds by BOM revision")
         revision_rows = []
         for product in ecn_summary["by_product"]:
             for revision in ("A", "B"):
@@ -856,12 +856,26 @@ if ecn_inputs is not None:
                     "Simulated builds": product["completed_by_revision"].get(
                         revision, 0
                     ),
-                    "Unfinished product demand": product["remaining_units"],
-                    "Manual-review units": product["review_required_units"],
                 })
         st.dataframe(
             pd.DataFrame(revision_rows), hide_index=True, width="stretch",
             alt="Simulated finished units by product and BOM revision",
+        )
+        st.subheader("Outstanding demand by product")
+        st.dataframe(
+            pd.DataFrame([{
+                "Product SKU": product["finished_sku"],
+                "Product demand": product["demand"],
+                "Simulated builds": product["completed_units"],
+                "Outstanding demand": product["remaining_units"],
+                "Manual-review units": product["review_required_units"],
+            } for product in ecn_summary["by_product"]]),
+            hide_index=True, width="stretch",
+            alt="One outstanding demand balance per finished product",
+        )
+        st.caption(
+            "Outstanding demand is counted once per product. The engine does not "
+            "assign unfinished units to a BOM revision."
         )
         daily_rows = [{
             "Date": row["date"],
@@ -901,9 +915,16 @@ if ecn_inputs is not None:
             "LED-100 and LED-101 are separate stock records. SCR-120 is the "
             "shared factory component; scenario fixtures use SCR for lamps only."
         )
+        inventory_by_sku = {item["sku"]: item for item in ecn_inputs["inventory"]}
         stock_rows = [{
             "Date": row["date"], "Component SKU": row["component_sku"],
             "Opening usable": row["opening_usable"],
+            "Reserved at snapshot": inventory_by_sku[
+                row["component_sku"]
+            ]["reserved"],
+            "Protected safety stock": inventory_by_sku[
+                row["component_sku"]
+            ]["safety_stock"],
             "Confirmed receipts": row["confirmed_receipts"],
             "Authorized hold": row["authorized_hold"],
             "Simulated use": row["simulated_use"],
@@ -918,6 +939,12 @@ if ecn_inputs is not None:
         st.dataframe(
             pd.DataFrame(stock_rows), hide_index=True, width="stretch",
             alt="Separate LED and shared-component daily stock balances",
+        )
+        st.caption(
+            "Projected physical stock includes quantities unavailable for this plan. "
+            "Snapshot reservations and protected safety stock are excluded from usable "
+            "stock; authorized ECN holds are separate and remain physically on hand. "
+            "Do not infer safety stock from the physical-minus-usable difference alone."
         )
         receipt_rows = [{
             "Component SKU": row["component_sku"],
@@ -953,6 +980,12 @@ if ecn_inputs is not None:
             )
         else:
             st.info("No dated component shortages in the nominal plan.")
+        st.caption(
+            "Suggested purchase quantities are nominal dated planning advice, not "
+            "orders or confirmed receipts. They may not cover unfinished demand "
+            "carried beyond the selected planning window. FactoryFlow does not "
+            "purchase stock automatically, and simulated completion dates are not guaranteed."
+        )
         if ecn_plan["purchase_advice"]:
             st.dataframe(
                 pd.DataFrame(ecn_plan["purchase_advice"]).rename(columns={
