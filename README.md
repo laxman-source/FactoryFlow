@@ -47,7 +47,9 @@ If the `py` launcher is unavailable, substitute `python` for `py` on the first l
 | `app.py` | What you see and click: dashboard, scenario controls, tables. |
 | `factoryflow/data.py` | Fictional finished products, BOM, inventory, and expected receipts. |
 | `factoryflow/planning.py` | The actual planning calculations and business rules. |
+| `factoryflow/material_timeline.py` | Standalone Phase 4A daily component availability engine. |
 | `tests/test_planning.py` | Tests to check whether the calculations produce correct answers. |
+| `tests/test_material_timeline.py` | Tests for dated receipts, shared stock, and daily material shortages. |
 | `requirements.txt` | The software packages the project needs. |
 | `CODEX_NEXT_STEPS.md` | Your next instruction for Codex after confirming Phase 1 works. |
 
@@ -72,6 +74,39 @@ Default plan: 200 smart desk lamps + 100 wireless chargers, production date Dece
 - Sufficient material does **not** guarantee an achievable production schedule.
 - Simulated supplier delivery dates are assumptions, not actual delivery promises.
 - The scenario controls change the displayed planning result, but **do not save** edits to an external system.
+
+## Phase 4A: daily material availability engine
+
+`calculate_material_timeline` in `factoryflow/material_timeline.py` is a separate
+calculation. The dashboard and the existing single-date MRP and capacity results
+are unchanged. Pass inventory and confirmed receipts in the existing data format,
+plus fictional daily **component** requirements such as
+`{"date": date(2026, 12, 1), "component_sku": "SCR-120", "qty": 40,
+"finished_sku": "FG-LAMP-01"}`. The finished SKU is optional context; `qty`
+already includes the BOM quantity needed for that product's planned production.
+The function returns one row per component per calendar day from `as_of` through
+`end_date`, including weekends. Rows contain opening balance, receipts,
+requirement, actual consumption, unmet need, and closing balance.
+
+Opening usable stock is `max(0, on_hand - reserved - safety_stock)`. Reserved and
+safety quantities are removed **once**, at the snapshot. Receipts dated on or
+before the snapshot are assumed already included in on-hand. On each later day,
+confirmed receipts are added **before** that day's requirements are consumed:
+`consumption = min(requirement, opening_balance + receipts)` and
+`closing_balance = opening_balance + receipts - consumption`. Requirements from
+multiple products for the same component and date are combined before stock is
+consumed, so the same units cannot serve both products. Unmet need stays on its
+original date; a later receipt does not repair it automatically. Weekend receipts
+enter stock on their stated date. A receipt with `confirmed=False` is excluded;
+the existing fictional `RECEIPTS` list is treated as confirmed. Suggested orders
+from MRP are recommendations and are not added to this ledger.
+
+This engine accepts daily component needs as input; it does not create those
+needs from a production schedule, allocate shortages among finished products,
+model receipt time of day or quality holds, or decide whether a line can run.
+The existing one-date MRP can report a shortage covered by a receipt before its
+single production date even when an earlier daily requirement in this ledger is
+unmet. Compare results using the same dates and input assumptions.
 
 ## Learning challenge
 
