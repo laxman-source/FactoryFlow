@@ -33,7 +33,7 @@ def test_default_capacity_is_separate_from_material_shortages():
     assert list(capacity["Working days available"]) == [4, 4]
     assert list(capacity["Available capacity"]) == [320, 240]
     assert list(capacity["Capacity shortage"]) == [0, 0]
-    assert list(capacity["Projected completion"]) == [date(2026, 12, 3), date(2026, 12, 2)]
+    assert list(capacity["Capacity-only finish estimate"]) == [date(2026, 12, 3), date(2026, 12, 2)]
     assert any("materials are short" in warning.value for warning in app.warning)
     assert not app.success
 
@@ -49,7 +49,7 @@ def test_adjusted_demand_highlights_capacity_shortage_and_late_finish():
     lamp = capacity.loc["Smart desk lamp line"]
     charger = capacity.loc["Wireless charger line"]
     assert (lamp["Working days needed"], lamp["Capacity shortage"]) == (5, 30)
-    assert lamp["Projected completion"] == date(2026, 12, 7)
+    assert lamp["Capacity-only finish estimate"] == date(2026, 12, 7)
     assert charger["Capacity shortage"] == 0
     assert next(metric.value for metric in app.metric if metric.label == "Lines past target") == "1"
     assert any("short 30 units" in error.value for error in app.error)
@@ -90,7 +90,7 @@ def test_zero_demand_has_no_projected_finish_or_capacity_shortage():
     capacity = table_with(app, "Production line")
     assert list(capacity["Working days needed"]) == [0, 0]
     assert list(capacity["Capacity shortage"]) == [0, 0]
-    assert capacity["Projected completion"].isna().all()
+    assert capacity["Capacity-only finish estimate"].isna().all()
     assert any("No production is scheduled" in info.value for info in app.info)
 
 

@@ -117,6 +117,47 @@ def test_ascending_sku_priority_gives_scarce_shared_part_to_charger():
     assert result["summary"]["remaining_inventory"]["S"] == 1
 
 
+def test_partial_receipts_feed_shared_stock_once_across_three_days():
+    # Hand calculation: usable S starts at 4 - 2 safety = 2. Receipts of
+    # 3, 2, and 2 add seven; the unconfirmed ten never enter stock.
+    # Chargers use 3 S; three lamps use 6 S, leaving zero.
+    start = date(2026, 12, 1)
+    middle = date(2026, 12, 2)
+    end = date(2026, 12, 3)
+    inventory = [
+        {"sku": "A", "name": "Lamp part", "on_hand": 4, "reserved": 0, "safety_stock": 0},
+        {"sku": "B", "name": "Charger part", "on_hand": 3, "reserved": 0, "safety_stock": 0},
+        {"sku": "S", "name": "Shared part", "on_hand": 4, "reserved": 0, "safety_stock": 2},
+    ]
+    receipts = [
+        receipt(start, "S", 3),
+        receipt(middle, "S", 2),
+        receipt(end, "S", 2),
+        receipt(start, "S", 10, confirmed=False),
+    ]
+    result = calculate_production_schedule(
+        {LAMP: 4, CHARGER: 3}, BOM, inventory, receipts,
+        date(2026, 11, 30), start, end, lines=LINES,
+    )
+
+    # Each day gives chargers first claim on the shared part. S closes at
+    # 1, 0, and 0; a fourth lamp remains unfinished despite free line capacity.
+    assert [daily(result, day, CHARGER)["actual_buildable_units"]
+            for day in (start, middle, end)] == [2, 1, 0]
+    assert [daily(result, day, LAMP)["actual_buildable_units"]
+            for day in (start, middle, end)] == [1, 1, 1]
+    assert [daily(result, day, LAMP)["remaining_inventory"]["S"]
+            for day in (start, middle, end)] == [1, 0, 0]
+    assert [daily(result, day, LAMP)["remaining_inventory"]["A"]
+            for day in (start, middle, end)] == [3, 2, 1]
+    assert [daily(result, day, LAMP)["remaining_inventory"]["B"]
+            for day in (start, middle, end)] == [1, 0, 0]
+    assert (summary(result, CHARGER)["completed_units"],
+            summary(result, LAMP)["completed_units"],
+            summary(result, LAMP)["remaining_units"]) == (3, 3, 1)
+    assert result["summary"]["remaining_inventory"] == {"A": 1, "B": 0, "S": 0}
+
+
 def test_overtime_increases_actual_builds_when_materials_exist():
     normal = schedule({LAMP: 4}, end=FRIDAY)
     overtime = schedule({LAMP: 4}, end=FRIDAY, overtime={LAMP: 2})

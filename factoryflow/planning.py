@@ -18,7 +18,7 @@ def calculate_plan(demand, bom, inventory, receipts, as_of, production_date, ext
 
     Gross = finished-goods demand x BOM quantity per product.
     Usable stock = max(0, on_hand - reserved - safety stock).
-    Eligible incoming = receipts with as_of < due_date <= production_date.
+    Eligible incoming = confirmed receipts with as_of < due_date <= production_date.
     Net shortage = max(0, gross - usable - eligible incoming).
     Suggested order = round shortage UP to supplier pack-size multiples.
 
@@ -59,6 +59,11 @@ def calculate_plan(demand, bom, inventory, receipts, as_of, production_date, ext
         _nonnegative_int(receipt["qty"], f"Receipt quantity for {sku}")
         if not isinstance(receipt["due_date"], date):
             raise ValueError(f"Receipt date for {sku} must be a date")
+        confirmed = receipt.get("confirmed", True)
+        if not isinstance(confirmed, bool):
+            raise ValueError(f"Receipt confirmation for {sku} must be a boolean")
+        if not confirmed:
+            continue
         if as_of < receipt["due_date"] <= production_date:
             incoming[sku] += receipt["qty"]
         elif receipt["due_date"] > production_date:

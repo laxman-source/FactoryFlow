@@ -111,6 +111,28 @@ def test_receipt_on_production_date_is_usable_but_next_day_is_late():
     assert led["suggested_order_qty"] == 80
 
 
+def test_unconfirmed_receipt_does_not_cover_shortage_or_count_as_late():
+    receipts = list(RECEIPTS) + [
+        {"component_sku": "LED-100", "qty": 1000,
+         "due_date": DEMO_PRODUCTION_DATE, "confirmed": False},
+        {"component_sku": "ADP-130", "qty": 1000,
+         "due_date": date(2026, 12, 3), "confirmed": False},
+    ]
+    plan = make_plan(receipts=receipts)
+    assert plan["LED-100"]["incoming_on_time"] == 40
+    assert plan["LED-100"]["net_shortage"] == 40
+    assert plan["ADP-130"]["incoming_late"] == 20
+
+
+def test_invalid_receipt_confirmation_is_rejected():
+    receipts = list(RECEIPTS) + [
+        {"component_sku": "LED-100", "qty": 10,
+         "due_date": DEMO_PRODUCTION_DATE, "confirmed": "no"},
+    ]
+    with pytest.raises(ValueError, match="confirmation"):
+        make_plan(receipts=receipts)
+
+
 def test_safety_stock_cannot_make_usable_stock_negative():
     inventory = [row.copy() for row in INVENTORY]
     next(row for row in inventory if row["sku"] == "LED-100")["safety_stock"] = 200

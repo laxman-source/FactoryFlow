@@ -71,7 +71,7 @@ st.session_state.setdefault("charger_downtime", "")
 
 
 st.title("🏭 FactoryFlow")
-st.caption("Manufacturing planning simulator · Phase 4C · 100% fictional factory data")
+st.caption("Manufacturing planning simulator · Phase 4D · 100% fictional factory data")
 
 st.info(
     "**Your job as a supply planner:** Check component supply and production line capacity "
@@ -82,8 +82,12 @@ with st.sidebar:
     st.header("Planning controls")
     scenario = st.radio(
         "Try a scenario",
-        ["Base plan", "Demand surge", "Supplier delays", "Extra stock arrives"],
+        ["Base plan", "Demand surge", "Longer supplier lead times", "Extra opening stock"],
         key="scenario", on_change=set_scenario_demand,
+    )
+    st.caption(
+        "Longer lead times change purchase advice, not confirmed receipts. "
+        "Extra opening stock is available at the planning snapshot."
     )
     st.divider()
     qty_lamp = st.number_input(
@@ -126,12 +130,12 @@ with st.sidebar:
     st.button("Reset simulation", key="reset_simulation", on_click=reset_simulation)
 
 inventory = [row.copy() for row in INVENTORY]
-if scenario == "Extra stock arrives":
+if scenario == "Extra opening stock":
     extra = {"LED-100": 150, "ADP-130": 100, "SCR-120": 200}
     for row in inventory:
         row["on_hand"] += extra.get(row["sku"], 0)
 
-additional_lead = 15 if scenario == "Supplier delays" else 0
+additional_lead = 15 if scenario == "Longer supplier lead times" else 0
 demand = {"FG-LAMP-01": int(qty_lamp), "FG-CHARGER-02": int(qty_charger)}
 try:
     plan = calculate_plan(
@@ -273,7 +277,7 @@ else:
             )
             st.error(
                 f"{row['line_name']}: short {row['capacity_shortage']} units by "
-                f"{target_completion.isoformat()}; projected finish is "
+                f"{target_completion.isoformat()}; capacity-only finish estimate is "
                 f"{projected_text}."
             )
     elif shortages:
@@ -284,7 +288,10 @@ else:
     elif not any(row["demand"] for row in capacity_plan):
         st.info("No production is scheduled for zero demand.")
     else:
-        st.success("Line capacity fits the window and the material plan shows no shortages.")
+        st.success(
+            "Capacity-only calculation fits the window and single-date MRP shows no shortages. "
+            "Check the integrated simulation for material-constrained output."
+        )
 
     capacity_columns = {
         "line_name": "Production line",
@@ -300,7 +307,7 @@ else:
         "capacity_shortage": "Capacity shortage",
         "first_production_date": "First production day",
         "target_completion": "Target completion",
-        "projected_completion": "Projected completion",
+        "projected_completion": "Capacity-only finish estimate",
         "capacity_status": "Capacity assessment",
     }
     capacity_df = pd.DataFrame(capacity_plan)
@@ -308,15 +315,16 @@ else:
         capacity_df[list(capacity_columns)].rename(columns=capacity_columns),
         width="stretch",
         hide_index=True,
-        alt="Production capacity and projected completion by line",
+        alt="Capacity-only calculation and finish estimate by line",
     )
     st.caption(
         "Working days available counts weekdays before downtime; operating days excludes full downtime. "
-        "Capacity is calculated separately from material supply. "
+        "The capacity-only finish estimate assumes materials are available; it is not the "
+        "material-constrained result shown in the integrated simulation. "
         "A line with zero demand has no projected completion date."
     )
 
-    st.subheader("Daily capacity")
+    st.subheader("Daily capacity-only estimate")
     latest_finish = max(
         (row["projected_completion"] for row in capacity_plan
          if row["projected_completion"] is not None),
@@ -368,18 +376,20 @@ with st.expander("Understand the capacity calculation"):
 - **Working days needed:** Units planned divided by normal plus overtime units per operating day, rounded up.
 - **Available capacity:** Operating weekdays in the window multiplied by normal plus overtime units per day.
 - **Capacity shortage:** Units planned minus available capacity, with a minimum of zero.
-- **Projected completion:** The last operating day needed after skipping weekends and the line's downtime dates, including dates after the target.
+- **Capacity-only finish estimate:** The last operating day needed after skipping weekends and the line's downtime dates, including dates after the target, assuming all required materials are available.
 
 This simple line calculation does not account for material shortages, holidays,
-partial downtime, or other production constraints. Check the separate Material planning results.
+partial downtime, or other production constraints. Check the integrated simulation
+for material-constrained output.
         """
     )
 
 st.header("Integrated Production Planning")
 st.caption(
     "This view combines confirmed component supply with each line's available capacity "
-    "from production start through target completion. It shows units actually buildable "
-    "inside that window; unfinished units have no assumed future completion date."
+    "from production start through target completion. It estimates units buildable "
+    "inside that window; unfinished units have no assumed future completion date. "
+    "All output and component use below are simulated; no production is recorded."
 )
 if capacity_plan is None:
     st.info("Enter a valid production window and downtime dates to see the integrated plan.")
@@ -417,22 +427,22 @@ else:
         )
         with st.container(horizontal=True):
             st.metric("Total planned finished units", result["total_demand"], border=True)
-            st.metric("Actual buildable units", result["total_completed"], border=True)
+            st.metric("Simulated buildable units", result["total_completed"], border=True)
             st.metric("Unfinished units", result["total_remaining"], border=True)
-            st.metric("Production completion", f"{completion_pct:.2f}%", border=True)
+            st.metric("Simulated completion", f"{completion_pct:.2f}%", border=True)
 
         st.caption(
             "Shared parts go first to the product with the alphabetically earlier finished SKU "
             "(chargers before lamps). This fixed demonstration rule is not an optimised "
             "production priority. MRP order suggestions are not counted as receipts."
         )
-        if scenario == "Supplier delays":
+        if scenario == "Longer supplier lead times":
             st.caption(
-                "Supplier delays changes MRP lead-time estimates only. The confirmed "
+                "Longer supplier lead times change MRP release advice only. The confirmed "
                 "receipt dates shown here remain unchanged."
             )
 
-        st.subheader("Completed versus unfinished by product")
+        st.subheader("Simulated output versus unfinished demand by product")
         product_rows = []
         for product in result["by_product"]:
             sku = product["finished_sku"]
@@ -450,16 +460,16 @@ else:
             product_rows.append({
                 "Product SKU": sku,
                 "Demand": product["demand"],
-                "Completed": product["completed_units"],
+                "Simulated buildable": product["completed_units"],
                 "Unfinished": product["remaining_units"],
                 "Why unfinished": "; ".join(reasons) if reasons else "Complete",
             })
         st.dataframe(
             pd.DataFrame(product_rows), width="stretch", hide_index=True,
-            alt="Completed and unfinished units with observed constraints by product",
+            alt="Simulated buildable and unfinished units with modeled constraints by product",
         )
 
-        st.subheader("Daily production")
+        st.subheader("Simulated daily production")
         line_names = {line["finished_sku"]: line["name"] for line in PRODUCTION_LINES}
         daily_rows = []
         unused_for_materials = 0
@@ -496,7 +506,7 @@ else:
                 "Product SKU": row["finished_sku"],
                 "Production line": line_names[row["finished_sku"]],
                 "Available capacity": row["available_capacity"],
-                "Finished units built": row["actual_buildable_units"],
+                "Simulated units buildable": row["actual_buildable_units"],
                 "Remaining demand": row["unfinished_demand"],
                 "Material constraints": critical,
                 "Constraint reason": reason,
@@ -504,7 +514,7 @@ else:
             })
         st.dataframe(
             pd.DataFrame(daily_rows), width="stretch", hide_index=True,
-            alt="Daily finished units built, remaining demand, and limiting components",
+            alt="Daily simulated buildable units, remaining demand, and limiting components",
         )
         st.metric("Capacity unused for materials", unused_for_materials, border=True)
         st.caption(
@@ -512,29 +522,29 @@ else:
             "required components had been available. Weekend and downtime capacity is zero."
         )
 
-        st.subheader("Daily component use and usable stock")
+        st.subheader("Simulated component use and projected usable stock")
         component_rows = [
             {
                 "Date": row["date"],
                 "Component SKU": row["component_sku"],
                 "Opening usable stock": row["opening_balance"],
                 "Confirmed receipts": row["receipts"],
-                "Components consumed": row["consumption"],
-                "Remaining usable stock": row["closing_balance"],
+                "Simulated component use": row["consumption"],
+                "Projected usable stock": row["closing_balance"],
             }
             for row in material_ledger
             if production_date <= row["date"] <= target_completion
         ]
         st.dataframe(
             pd.DataFrame(component_rows), width="stretch", hide_index=True,
-            alt="Daily component receipts, actual consumption, and closing usable stock",
+            alt="Daily component receipts, simulated use, and projected usable stock",
         )
         st.caption(
             "Usable stock excludes reserved and safety stock. Confirmed receipts are added "
             "before same-day production; receipts before production start are included "
-            "in the first day's opening balance. The component table records parts used "
-            "only for finished units actually built."
+            "in the first day's opening balance. Simulated component use includes parts "
+            "only for finished units the model could build."
         )
 
 st.divider()
-st.caption("FactoryFlow Phase 4C · Built for portfolio learning · Fictional numbers only · No ERP integration")
+st.caption("FactoryFlow Phase 4D · Built for portfolio learning · Fictional numbers only · No ERP integration")

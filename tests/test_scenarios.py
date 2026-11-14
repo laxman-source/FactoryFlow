@@ -28,7 +28,7 @@ EXPECTED = {
         "CHG-HSG-210": (150, 110, 0, 40, 40, date(2026, 11, 25), "Order now"),
         "USB-220": (150, 60, 50, 40, 40, date(2026, 11, 25), "Order now"),
     },
-    "Supplier delays": {
+    "Longer supplier lead times": {
         "LED-100": (200, 120, 40, 40, 40, date(2026, 11, 9), "At risk: expedite"),
         "LAM-HSG-110": (200, 240, 0, 0, 0, None, "Covered"),
         "SCR-120": (1000, 900, 0, 100, 200, date(2026, 11, 11), "At risk: expedite"),
@@ -37,7 +37,7 @@ EXPECTED = {
         "CHG-HSG-210": (100, 110, 0, 0, 0, None, "Covered"),
         "USB-220": (100, 60, 50, 0, 0, None, "Covered"),
     },
-    "Extra stock arrives": {
+    "Extra opening stock": {
         "LED-100": (200, 270, 40, 0, 0, None, "Covered"),
         "LAM-HSG-110": (200, 240, 0, 0, 0, None, "Covered"),
         "SCR-120": (1000, 1100, 0, 0, 0, None, "Covered"),

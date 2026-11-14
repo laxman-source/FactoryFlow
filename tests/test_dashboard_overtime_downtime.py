@@ -38,7 +38,7 @@ def test_precise_lamp_scenario_with_and_without_overtime():
     assert (lamp["Units per day"], lamp["Overtime units/day"]) == (80, 20)
     assert (lamp["Downtime days"], lamp["Operating days"]) == (1, 3)
     assert (lamp["Available capacity"], lamp["Capacity shortage"]) == (300, 0)
-    assert lamp["Projected completion"] == date(2026, 12, 4)
+    assert lamp["Capacity-only finish estimate"] == date(2026, 12, 4)
 
     daily = table_with(app, "Normal rate")
     lamp_daily = daily[daily["Production line"] == "Smart desk lamp line"]
@@ -50,7 +50,7 @@ def test_precise_lamp_scenario_with_and_without_overtime():
     assert not app.exception
     lamp = lamp_row(app)
     assert (lamp["Available capacity"], lamp["Capacity shortage"]) == (240, 10)
-    assert lamp["Projected completion"] == date(2026, 12, 7)
+    assert lamp["Capacity-only finish estimate"] == date(2026, 12, 7)
     assert any("short 10 units" in error.value for error in app.error)
     daily = table_with(app, "Normal rate")
     lamp_daily = daily[daily["Production line"] == "Smart desk lamp line"]
@@ -67,7 +67,7 @@ def test_multiple_downtime_dates_after_target_delay_late_finish():
     assert not app.exception
     lamp = lamp_row(app)
     assert (lamp["Available capacity"], lamp["Capacity shortage"]) == (240, 10)
-    assert lamp["Projected completion"] == date(2026, 12, 8)
+    assert lamp["Capacity-only finish estimate"] == date(2026, 12, 8)
     daily = table_with(app, "Normal rate")
     late_downtime = daily[
         (daily["Production line"] == "Smart desk lamp line")
@@ -86,9 +86,9 @@ def test_overtime_and_downtime_are_independent_by_line():
     assert not app.exception
     rows = table_with(app, "Capacity shortage").set_index("Production line")
     assert rows.loc["Wireless charger line", "Available capacity"] == 240
-    assert rows.loc["Wireless charger line", "Projected completion"] == date(2026, 12, 4)
+    assert rows.loc["Wireless charger line", "Capacity-only finish estimate"] == date(2026, 12, 4)
     assert rows.loc["Smart desk lamp line", "Available capacity"] == 320
-    assert rows.loc["Smart desk lamp line", "Projected completion"] == date(2026, 12, 3)
+    assert rows.loc["Smart desk lamp line", "Capacity-only finish estimate"] == date(2026, 12, 3)
 
 
 @pytest.mark.parametrize("dates", ["2026-12-99", "2026-12-02\n2026-12-02"])
@@ -112,7 +112,7 @@ def test_zero_demand_has_no_completion_date_with_capacity_options():
 
     assert not app.exception
     capacity = table_with(app, "Capacity shortage")
-    assert capacity["Projected completion"].isna().all()
+    assert capacity["Capacity-only finish estimate"].isna().all()
     assert list(capacity["Capacity shortage"]) == [0, 0]
     assert any("No production is scheduled" in info.value for info in app.info)
 
@@ -127,7 +127,7 @@ def test_daily_table_shows_weekends_and_downtime_as_zero():
     app.run()
 
     assert not app.exception
-    assert lamp_row(app)["Projected completion"] == date(2026, 12, 1)
+    assert lamp_row(app)["Capacity-only finish estimate"] == date(2026, 12, 1)
     daily = table_with(app, "Normal rate")
     lamp_daily = daily[daily["Production line"] == "Smart desk lamp line"]
     assert list(lamp_daily["Total capacity"]) == [0, 0, 0, 100]
