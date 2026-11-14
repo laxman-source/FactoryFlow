@@ -1,6 +1,6 @@
-# FactoryFlow — manufacturing planning simulator (Phase 4D)
+# FactoryFlow — manufacturing planning simulator (Phase 5B engine)
 
-FactoryFlow is a local learning project with fictional smart desk lamp and wireless charger data. It combines material planning, line capacity, and dated component supply to estimate what could be built in a selected production window. It records no factory activity, creates no purchase orders, and connects to no ERP or external API.
+FactoryFlow is a local learning project with fictional smart desk lamp and wireless charger data. It combines material planning, line capacity, and dated component supply to estimate what could be built in a selected production window. Phase 5B adds a Python Engineering Change Notice (ECN) planning engine; the Streamlit dashboard still uses the verified Phase 4D no-ECN flow. The app records no factory activity, creates no purchase orders, and connects to no ERP or external API.
 
 ## What the application calculates
 
@@ -46,6 +46,16 @@ With the default December 1–4, 2026 window and no overtime or downtime, the in
 
 Demand, snapshot and production dates, target completion, overtime, and full downtime dates can also be changed in the sidebar. Reset simulation restores the defaults. All controls affect local calculations only.
 
+## Phase 5B: ECN planning engine
+
+`factoryflow/ecn.py` defines immutable BOM revisions, ECN change lines, status transitions, production lots, and authorized stock holds. `approve_ecn` accepts only a draft with a complete replacement BOM, a valid component master, an approver, a disposition plan, and an effective date later than the approval date. A draft or cancelled ECN never activates its proposed revision. An approved notice can be cancelled only before it takes effect; an effective change needs a new, dated superseding ECN. The full business design and independently calculated examples are in [`docs/ECN_DESIGN.md`](docs/ECN_DESIGN.md).
+
+`factoryflow/ecn_planning.py` exposes `calculate_ecn_plan`. It preserves the existing BOM as Revision A and selects an approved revision by **simulated production date**, not order-creation date. For `ECN-001`, new lamp production before December 3, 2026 uses `LED-100`; new production on or after that date uses Revision B and `LED-101`. Each LED SKU has its own stock balance. Confirmed receipts arrive before same-day use; unconfirmed receipts and purchase suggestions never become available material. Charger-first shared-component allocation and dedicated-line capacity still apply across one continuous daily schedule.
+
+The result includes daily simulated builds, a date/order/revision trace, dated component requirements, stock balances, and pack-rounded purchase advice based on the first shortage date. This advice identifies a risk to the dated plan; it is not a supplier promise or a confirmed delivery. Unfinished work carries forward within the selected window. Released lots pinned to an old revision are held for manual review when the active revision changes. WIP is also held; the engine never assumes it has been reworked or that issued components were returned. An authorized dated hold removes stock from usable supply while retaining it as physical on-hand. Use-up, return, and scrap choices are reported for review and do not automatically post an inventory transaction.
+
+The fictional dashboard data has no `LED-101` inventory master. An ECN simulation must supply one explicitly, even if opening stock is zero. No ECN is active in the existing dashboard. The old `calculate_plan`, `calculate_material_timeline`, `calculate_capacity_plan`, and `calculate_production_schedule` APIs remain available unchanged; the no-ECN ECN-engine path is tested against the Phase 4D production result.
+
 ## Run and test on Windows
 
 Install Python 3.11 or newer, open PowerShell in this folder, and run:
@@ -69,16 +79,21 @@ If the `py` launcher is unavailable, use `python -m venv .venv`. Open the local 
 | `factoryflow/capacity.py` | Capacity-only calculation, overtime, and downtime |
 | `factoryflow/material_timeline.py` | Daily component availability ledger |
 | `factoryflow/production_schedule.py` | Material-constrained daily finished-unit simulation |
+| `factoryflow/ecn.py` | ECN records, approval/cancellation safeguards, and BOM revision selection |
+| `factoryflow/ecn_planning.py` | Revision-aware daily production, stock, and purchase-advice simulation |
+| `docs/ECN_DESIGN.md` | Phase 5A business rules and independent scenario calculations |
 | `tests/` | Automated business-logic and dashboard checks |
 
 ## Known limits
 
-- The BOM has one level. There are no subassemblies, alternatives, substitutions, revision dates, or Engineering Change Notices (ECNs).
+- The BOM has one level. ECN revisions are dated in the Python engine, but there are no subassemblies, automatic alternatives, or component substitutions.
 - MRP uses one common component-need date. Its single-date shortage can differ from a daily schedule that uses receipts later in the production window.
 - Receipts are available before production on their due date; time of day, supplier reliability, and quality inspection are not modeled. Pack rounding has no minimum-order rules.
 - Capacity uses dedicated lines, weekdays, constant daily rates, and full-day downtime. There are no holidays, shifts, partial outages, setup/changeover time, labor limits, or shared machines.
-- Builds assume complete component sets and 100% yield. There is no scrap, rework, partial assembly, work in progress, or order-level allocation.
+- Builds assume complete component sets and 100% yield. Scrap, rework, and partial assembly are not modeled. The Phase 4D dashboard has no order-level lot controls.
+- The ECN engine recognizes released lots and WIP for manual review, but cannot resolve WIP, post returns or scrap, release holds, or execute an approved deviation. If two ready lots of one product compete on a day, the engine stops until production control supplies a dispatch decision; it does not invent a lot priority.
+- The ECN engine uses the approval status supplied for a simulation. The inventory snapshot date is not a historical approval cutoff; the engine does not reconstruct which approvals were known on that date.
 - Capacity-only finish dates do not account for materials. The integrated simulation ends at the selected target date and makes no completion promise beyond it.
 - All numbers are fictional. The app does not record actual production, reserve stock, place orders, or update any external system.
 
-Before using this as more than a learning prototype, validate the rules against real operating policies and data. No ECN or NPI workflow is included in Phase 4D.
+Before using this as more than a learning prototype, validate the rules against real operating policies and data. Phase 5B does not add an ECN dashboard, NPI workflow, shop-floor execution, or external integration.
