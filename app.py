@@ -16,6 +16,8 @@ from factoryflow.data import (
     RECEIPTS,
 )
 from factoryflow.planning import calculate_plan
+from factoryflow.material_timeline import calculate_material_timeline
+from factoryflow.production_schedule import calculate_production_schedule
 
 
 def parse_downtime_dates(text, line_name):
@@ -69,7 +71,7 @@ st.session_state.setdefault("charger_downtime", "")
 
 
 st.title("🏭 FactoryFlow")
-st.caption("Manufacturing planning simulator · Phase 2 Stage 3B · 100% fictional factory data")
+st.caption("Manufacturing planning simulator · Phase 4C · 100% fictional factory data")
 
 st.info(
     "**Your job as a supply planner:** Check component supply and production line capacity "
@@ -225,6 +227,7 @@ st.caption(
     "Two fictional, dedicated lines: smart desk lamps make 80 units per working day; "
     "wireless chargers make 60. Weekends are excluded. Set overtime and downtime in Capacity options."
 )
+capacity_plan = None
 try:
     overtime_by_sku = {
         "FG-LAMP-01": int(lamp_overtime),
@@ -372,5 +375,166 @@ partial downtime, or other production constraints. Check the separate Material p
         """
     )
 
+st.header("Integrated Production Planning")
+st.caption(
+    "This view combines confirmed component supply with each line's available capacity "
+    "from production start through target completion. It shows units actually buildable "
+    "inside that window; unfinished units have no assumed future completion date."
+)
+if capacity_plan is None:
+    st.info("Enter a valid production window and downtime dates to see the integrated plan.")
+else:
+    try:
+        integrated = calculate_production_schedule(
+            demand=demand,
+            bom=BOM,
+            inventory=inventory,
+            receipts=RECEIPTS,
+            as_of=as_of,
+            production_start=production_date,
+            production_end=target_completion,
+            lines=PRODUCTION_LINES,
+            overtime_by_sku=overtime_by_sku,
+            downtime_by_sku=downtime_by_sku,
+        )
+        # Replay only components used by completed units. Phase 4A applies the
+        # same receipt timing and opening usable-stock rules for the display.
+        actual_component_needs = [
+            {"date": row["date"], "component_sku": sku, "qty": quantity}
+            for row in integrated["daily_schedule"]
+            for sku, quantity in row["components_consumed"].items()
+        ]
+        material_ledger = calculate_material_timeline(
+            inventory, RECEIPTS, actual_component_needs, as_of, target_completion,
+        )
+    except ValueError as exc:
+        st.error(f"Cannot calculate integrated plan: {exc}")
+    else:
+        result = integrated["summary"]
+        completion_pct = (
+            100 * result["total_completed"] / result["total_demand"]
+            if result["total_demand"] else 0
+        )
+        with st.container(horizontal=True):
+            st.metric("Total planned finished units", result["total_demand"], border=True)
+            st.metric("Actual buildable units", result["total_completed"], border=True)
+            st.metric("Unfinished units", result["total_remaining"], border=True)
+            st.metric("Production completion", f"{completion_pct:.2f}%", border=True)
+
+        st.caption(
+            "Shared parts go first to the product with the alphabetically earlier finished SKU "
+            "(chargers before lamps). This fixed demonstration rule is not an optimised "
+            "production priority. MRP order suggestions are not counted as receipts."
+        )
+        if scenario == "Supplier delays":
+            st.caption(
+                "Supplier delays changes MRP lead-time estimates only. The confirmed "
+                "receipt dates shown here remain unchanged."
+            )
+
+        st.subheader("Completed versus unfinished by product")
+        product_rows = []
+        for product in result["by_product"]:
+            sku = product["finished_sku"]
+            reasons = []
+            if "material" in product["remaining_reasons"]:
+                reasons.append("Material availability")
+            if "capacity" in product["remaining_reasons"]:
+                reasons.append("Production capacity")
+            if product["remaining_units"] and any(
+                row["finished_sku"] == sku and row["line_state"] == "Downtime"
+                and row["planned_remaining_demand"] > 0
+                for row in integrated["daily_schedule"]
+            ):
+                reasons.append("Machine downtime reduced capacity")
+            product_rows.append({
+                "Product SKU": sku,
+                "Demand": product["demand"],
+                "Completed": product["completed_units"],
+                "Unfinished": product["remaining_units"],
+                "Why unfinished": "; ".join(reasons) if reasons else "Complete",
+            })
+        st.dataframe(
+            pd.DataFrame(product_rows), width="stretch", hide_index=True,
+            alt="Completed and unfinished units with observed constraints by product",
+        )
+
+        st.subheader("Daily production")
+        line_names = {line["finished_sku"]: line["name"] for line in PRODUCTION_LINES}
+        daily_rows = []
+        unused_for_materials = 0
+        for row in integrated["daily_schedule"]:
+            material_limited = "material" in row["constraints"]
+            unused = (
+                min(row["planned_remaining_demand"], row["available_capacity"])
+                - row["actual_buildable_units"]
+                if material_limited else 0
+            )
+            unused_for_materials += unused
+            if row["planned_remaining_demand"] == 0:
+                reason = "No demand remaining"
+            elif row["line_state"] == "Downtime":
+                reason = "Machine downtime"
+            elif row["line_state"] == "Weekend":
+                reason = "Weekend: no production"
+            elif len(row["constraints"]) == 2:
+                reason = "Material and capacity"
+            elif material_limited:
+                reason = "Material availability"
+            elif "capacity" in row["constraints"]:
+                reason = "Production capacity"
+            else:
+                reason = "None"
+            critical = (
+                ", ".join(
+                    f"{sku} ({row['available_components'][sku]} usable)"
+                    for sku in row["critical_components"]
+                ) if material_limited else "None"
+            )
+            daily_rows.append({
+                "Date": row["date"],
+                "Product SKU": row["finished_sku"],
+                "Production line": line_names[row["finished_sku"]],
+                "Available capacity": row["available_capacity"],
+                "Finished units built": row["actual_buildable_units"],
+                "Remaining demand": row["unfinished_demand"],
+                "Material constraints": critical,
+                "Constraint reason": reason,
+                "Capacity unused for materials": unused,
+            })
+        st.dataframe(
+            pd.DataFrame(daily_rows), width="stretch", hide_index=True,
+            alt="Daily finished units built, remaining demand, and limiting components",
+        )
+        st.metric("Capacity unused for materials", unused_for_materials, border=True)
+        st.caption(
+            "Unused capacity counts units that a line could have built that day if its "
+            "required components had been available. Weekend and downtime capacity is zero."
+        )
+
+        st.subheader("Daily component use and usable stock")
+        component_rows = [
+            {
+                "Date": row["date"],
+                "Component SKU": row["component_sku"],
+                "Opening usable stock": row["opening_balance"],
+                "Confirmed receipts": row["receipts"],
+                "Components consumed": row["consumption"],
+                "Remaining usable stock": row["closing_balance"],
+            }
+            for row in material_ledger
+            if production_date <= row["date"] <= target_completion
+        ]
+        st.dataframe(
+            pd.DataFrame(component_rows), width="stretch", hide_index=True,
+            alt="Daily component receipts, actual consumption, and closing usable stock",
+        )
+        st.caption(
+            "Usable stock excludes reserved and safety stock. Confirmed receipts are added "
+            "before same-day production; receipts before production start are included "
+            "in the first day's opening balance. The component table records parts used "
+            "only for finished units actually built."
+        )
+
 st.divider()
-st.caption("FactoryFlow Phase 2 Stage 3B · Built for portfolio learning · Fictional numbers only · No ERP integration")
+st.caption("FactoryFlow Phase 4C · Built for portfolio learning · Fictional numbers only · No ERP integration")
