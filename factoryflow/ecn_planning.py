@@ -124,6 +124,18 @@ def _requirement_ledger(masters, receipts_by_day, opening, holds_by_day,
     required = defaultdict(int)
     for row in requirements:
         required[row["date"], row["component_sku"]] += row["qty"]
+    # Keep enough nominal stock for future authorized holds after accounting
+    # for confirmed receipts that will arrive before each hold date.
+    reserve_after = {}
+    future_hold_need = {sku: 0 for sku in masters}
+    for offset in range((end - as_of).days, -1, -1):
+        day = as_of + timedelta(days=offset)
+        for sku in masters:
+            reserve_after[day, sku] = future_hold_need[sku]
+            future_hold_need[sku] = max(
+                0, future_hold_need[sku] + holds_by_day[day, sku]
+                - receipts_by_day[day, sku],
+            )
     balances = opening.copy()
     ledger = []
     for offset in range((end - as_of).days + 1):
@@ -137,7 +149,7 @@ def _requirement_ledger(masters, receipts_by_day, opening, holds_by_day,
                 raise ValueError(f"Stock hold exceeds usable {sku} on {day}")
             available -= held
             need = required[day, sku]
-            used = min(need, available)
+            used = min(need, max(0, available - reserve_after[day, sku]))
             balances[sku] = available - used
             ledger.append({
                 "date": day, "component_sku": sku,
