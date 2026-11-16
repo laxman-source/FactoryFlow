@@ -408,3 +408,45 @@ def test_no_ecn_matches_phase4d_production_and_component_balances(options):
     if not options:
         assert current["summary"]["total_completed"] == 260
     assert current["summary"]["remaining_inventory"] == legacy["summary"]["remaining_inventory"]
+
+
+def test_future_authorized_hold_is_reserved_in_nominal_requirements():
+    """Nominal advice must not consume stock that actual builds leave for a hold."""
+    replacement = BOMRevision(
+        LAMP, "B",
+        tuple(
+            ("LED-101" if row["component_sku"] == "LED-100"
+             else row["component_sku"], row["qty_per_unit"])
+            for row in BOM if row["finished_sku"] == LAMP
+        ),
+    )
+    inventory = [row.copy() for row in INVENTORY] + [{
+        "sku": "LED-101", "name": "Fictional replacement LED",
+        "on_hand": 0, "reserved": 0, "safety_stock": 0,
+        "lead_days": 7, "pack_size": 5,
+    }]
+    notice = approve_ecn(
+        ECN("ECN-001", LAMP, "A", "B", D3, (CHANGE,), "hold"),
+        approval_date=D2, effective_date=D3,
+        approved_by="Fictional approver", base_bom=BOM,
+        proposed_revisions=[replacement], inventory=inventory,
+    )
+    result = calculate_ecn_plan(
+        DEFAULT_DEMAND, BOM, inventory, RECEIPTS, DEMO_AS_OF, D1, D4,
+        proposed_revisions=[replacement], ecns=[notice],
+        stock_holds=[StockHold(
+            "LED-100", 10, D3, "Fictional stock controller", D2,
+        )],
+    )
+    nominal_dec2 = next(
+        row for row in result["requirement_ledger"]
+        if row["date"] == D2 and row["component_sku"] == "LED-100"
+    )
+    closing_old = next(
+        row for row in result["stock_ledger"]
+        if row["date"] == D4 and row["component_sku"] == "LED-100"
+    )
+    assert nominal_dec2["unmet_need"] == 10
+    assert result["summary"]["total_completed"] == 250
+    assert (closing_old["closing_physical"], closing_old["closing_held"],
+            closing_old["closing_usable"]) == (10, 10, 0)

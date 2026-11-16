@@ -18,6 +18,12 @@ from factoryflow.data import (
 from factoryflow.planning import calculate_plan
 from factoryflow.material_timeline import calculate_material_timeline
 from factoryflow.production_schedule import calculate_production_schedule
+from factoryflow.ecn import (
+    BOMRevision, ECN, ECNChangeLine, ProductionLot, StockHold,
+    approve_ecn, cancel_ecn,
+)
+from factoryflow.ecn_planning import calculate_ecn_plan
+from factoryflow.ecn_scenarios import SCENARIO_NAMES, SCENARIO_NOTES, scenario_inputs
 
 
 def parse_downtime_dates(text, line_name):
@@ -71,7 +77,7 @@ st.session_state.setdefault("charger_downtime", "")
 
 
 st.title("🏭 FactoryFlow")
-st.caption("Manufacturing planning simulator · Phase 4D · 100% fictional factory data")
+st.caption("Manufacturing planning simulator · Phase 5C · 100% fictional factory data")
 
 st.info(
     "**Your job as a supply planner:** Check component supply and production line capacity "
@@ -547,4 +553,510 @@ else:
         )
 
 st.divider()
-st.caption("FactoryFlow Phase 4D · Built for portfolio learning · Fictional numbers only · No ERP integration")
+st.header("ECN simulation")
+st.warning(
+    "SIMULATION ONLY — this section records no approval, production, purchase, "
+    "inventory posting, scrap, return, or WIP release."
+)
+st.caption(
+    "ECN-001 replaces one LED-100 with one LED-101 in each smart desk lamp. "
+    "Revision A remains the baseline; Revision B is selected by simulated production date "
+    "only when the change is approved."
+)
+
+with st.sidebar:
+    st.divider()
+    st.header("ECN controls")
+    ecn_view = st.segmented_control(
+        "ECN view", ["Factory plan", "Scenario explorer"],
+        default="Factory plan", key="ecn_view",
+    )
+ecn_inputs = None
+ecn_note = None
+lot_mode = "New unstarted lot"
+if ecn_view == "Scenario explorer":
+    with st.sidebar:
+        ecn_code = st.selectbox(
+            "Design scenario A–H", list(SCENARIO_NAMES),
+            format_func=lambda code: SCENARIO_NAMES[code], key="ecn_scenario",
+        )
+    ecn_inputs = scenario_inputs(ecn_code)
+    ecn_note = SCENARIO_NOTES[ecn_code]
+    st.info(ecn_note)
+    st.caption(
+        "These fixed fictional examples use two lamp units of daily capacity and "
+        "the independently calculated inputs in docs/ECN_DESIGN.md. "
+        "They do not use the main dashboard sidebar demand."
+    )
+elif capacity_plan is None:
+    st.info("Enter valid production dates and downtime before simulating the factory ECN plan.")
+else:
+    st.subheader("Factory ECN inputs")
+    st.caption(
+        "Use the sidebar ECN controls for a local example only. LED-101 has an explicit "
+        "fictional master: seven calendar-day lead time and five-unit supplier packs."
+    )
+    with st.sidebar:
+        with st.container(border=True):
+            ecn_state = st.selectbox(
+                "Simulated ECN status", ["Approved", "Draft", "Cancelled"],
+                key="ecn_status",
+            )
+            ecn_effective = st.date_input(
+                "Proposed effective date", value=date(2026, 12, 3),
+                key="ecn_effective",
+            )
+            ecn_approval = st.date_input(
+                "Fictional approval date", value=date(2026, 12, 2),
+                key="ecn_approval",
+            )
+            disposition = st.selectbox(
+                "Old LED-100 disposition proposal",
+                ["hold", "use-up", "return", "scrap"], key="ecn_disposition",
+            )
+            new_opening = st.number_input(
+                "LED-101 opening on-hand units", min_value=0, max_value=100000,
+                value=0, key="ecn_new_opening",
+            )
+            new_receipt_qty = st.number_input(
+                "LED-101 dated receipt units", min_value=0, max_value=100000,
+                value=0, key="ecn_new_receipt_qty",
+            )
+            new_receipt_date = st.date_input(
+                "LED-101 receipt due date", value=date(2026, 12, 4),
+                key="ecn_new_receipt_date",
+            )
+            new_receipt_confirmed = st.checkbox(
+                "LED-101 receipt confirmed", value=False,
+                key="ecn_new_receipt_confirmed",
+            )
+            old_receipt_confirmed = st.checkbox(
+                "Demo LED-100 receipt confirmed", value=True,
+                key="ecn_old_receipt_confirmed",
+            )
+            old_hold_qty = st.number_input(
+                "Authorized LED-100 hold units at effect",
+                min_value=0, max_value=100000, value=0,
+                disabled=ecn_state != "Approved", key="ecn_old_hold",
+            )
+            lot_mode = st.selectbox(
+                "Lamp lot state to simulate",
+                ["New unstarted lot", "Released on Revision A",
+                 "WIP on Revision A", "Two ready lots without dispatch rule"],
+                key="ecn_lot_mode",
+            )
+
+    try:
+        ecn_inventory = [item.copy() for item in inventory]
+        ecn_inventory.append({
+            "sku": "LED-101", "name": "Replacement LED board (fictional)",
+            "on_hand": int(new_opening), "reserved": 0, "safety_stock": 0,
+            "lead_days": 7, "pack_size": 5,
+        })
+        ecn_receipts = [
+            {**item, "confirmed": (
+                bool(old_receipt_confirmed)
+                if item["component_sku"] == "LED-100"
+                else item.get("confirmed", True)
+            )}
+            for item in RECEIPTS
+        ]
+        if new_receipt_qty:
+            ecn_receipts.append({
+                "component_sku": "LED-101", "qty": int(new_receipt_qty),
+                "due_date": new_receipt_date,
+                "confirmed": bool(new_receipt_confirmed),
+            })
+        revision_b = BOMRevision(
+            "FG-LAMP-01", "B",
+            tuple(
+                ("LED-101" if line["component_sku"] == "LED-100"
+                 else line["component_sku"], line["qty_per_unit"])
+                for line in BOM if line["finished_sku"] == "FG-LAMP-01"
+            ),
+        )
+        draft_notice = ECN(
+            "ECN-001", "FG-LAMP-01", "A", "B", ecn_effective,
+            (ECNChangeLine("LED-100", "LED-101", 1, 1),), disposition,
+        )
+        if ecn_state == "Draft":
+            notice = draft_notice
+        else:
+            approved_notice = approve_ecn(
+                draft_notice, approval_date=ecn_approval,
+                effective_date=ecn_effective,
+                approved_by="Fictional engineering approver",
+                base_bom=BOM, proposed_revisions=[revision_b],
+                inventory=ecn_inventory,
+            )
+            notice = (
+                approved_notice if ecn_state == "Approved"
+                else cancel_ecn(
+                    approved_notice, cancellation_date=ecn_approval,
+                    reason="Fictional pre-effective cancellation",
+                )
+            )
+        holds = []
+        if ecn_state == "Approved" and old_hold_qty:
+            holds.append(StockHold(
+                "LED-100", int(old_hold_qty), ecn_effective,
+                "Fictional stock controller", ecn_approval,
+            ))
+        lots = None
+        if lot_mode != "New unstarted lot":
+            lamp_qty = demand["FG-LAMP-01"]
+            lots = [ProductionLot(
+                "SIM-CHARGER", "FG-CHARGER-02",
+                demand["FG-CHARGER-02"], as_of,
+            )]
+            if lot_mode == "Two ready lots without dispatch rule":
+                if lamp_qty < 2:
+                    raise ValueError(
+                        "Two ready lamp lots require at least two lamp units."
+                    )
+                lots.extend([
+                    ProductionLot("SIM-LAMP-1", "FG-LAMP-01",
+                                  lamp_qty // 2, as_of),
+                    ProductionLot("SIM-LAMP-2", "FG-LAMP-01",
+                                  lamp_qty - lamp_qty // 2, as_of),
+                ])
+            else:
+                state = (
+                    "released" if lot_mode == "Released on Revision A"
+                    else "wip"
+                )
+                lots.append(ProductionLot(
+                    "SIM-LAMP", "FG-LAMP-01", lamp_qty, as_of,
+                    state, "A",
+                ))
+        ecn_inputs = {
+            "demand": demand, "base_bom": BOM,
+            "inventory": ecn_inventory, "receipts": ecn_receipts,
+            "as_of": as_of, "production_start": production_date,
+            "production_end": target_completion,
+            "proposed_revisions": [revision_b], "ecns": [notice],
+            "stock_holds": holds, "lots": lots, "lines": PRODUCTION_LINES,
+            "overtime_by_sku": overtime_by_sku,
+            "downtime_by_sku": downtime_by_sku,
+        }
+    except ValueError as exc:
+        st.error(f"ECN input rejected: {exc}")
+
+if ecn_inputs is not None:
+    notice = ecn_inputs["ecns"][0]
+    st.subheader("ECN overview")
+    with st.container(horizontal=True):
+        st.metric("Simulated ECN state", notice.status.title(), border=True)
+        st.metric("Revision change", "A → B", border=True)
+        st.metric(
+            "Proposed effective date",
+            notice.proposed_effective_date.isoformat(), border=True,
+        )
+        st.metric(
+            "Approved effective date",
+            notice.effective_date.isoformat()
+            if notice.status == "approved" else "Inactive",
+            border=True,
+        )
+    st.caption(
+        "Draft and cancelled notices leave Revision A active. "
+        "An approved notice selects Revision B on its effective production date. "
+        "Approval is scenario data, not a transaction in FactoryFlow."
+    )
+
+    baseline_inputs = {**ecn_inputs, "ecns": ()}
+    if lot_mode == "Two ready lots without dispatch rule":
+        baseline_inputs["lots"] = None
+    baseline_plan = None
+    ecn_plan = None
+    try:
+        baseline_plan = calculate_ecn_plan(**baseline_inputs)
+        ecn_plan = calculate_ecn_plan(**ecn_inputs)
+    except ValueError as exc:
+        st.error(f"ECN plan rejected: {exc}")
+        st.warning(
+            "No final ECN schedule or component consumption is published "
+            "for this invalid plan."
+        )
+
+    if ecn_plan is not None:
+        baseline_summary = baseline_plan["summary"]
+        ecn_summary = ecn_plan["summary"]
+        impact = (
+            ecn_summary["total_completed"] - baseline_summary["total_completed"]
+        )
+        with st.container(horizontal=True):
+            st.metric(
+                "Baseline simulated builds",
+                baseline_summary["total_completed"], border=True,
+            )
+            st.metric(
+                "ECN simulated builds",
+                ecn_summary["total_completed"], border=True,
+            )
+            st.metric("ECN build change vs baseline", impact, border=True)
+            st.metric(
+                "ECN unfinished units",
+                ecn_summary["total_remaining"], border=True,
+            )
+        st.caption(
+            "Both plans use the same fictional demand, stock, receipts, capacity "
+            "and lot state. The baseline keeps Revision A. "
+            "An authorized stock hold, when selected, applies to both plans."
+        )
+
+        st.subheader("ECN impact comparison")
+        comparison = []
+        for label, current in (
+            ("Revision A baseline", baseline_plan),
+            ("Selected ECN state", ecn_plan),
+        ):
+            summary = current["summary"]
+            built_dates = [
+                row["date"] for row in current["revision_trace"]
+                if row["simulated_units"] > 0
+            ]
+            completed_by = (
+                max(built_dates).isoformat()
+                if summary["complete"] and built_dates
+                else "No demand" if summary["total_demand"] == 0
+                else "Not reached in window"
+            )
+            comparison.append({
+                "Plan": label,
+                "Simulated builds": summary["total_completed"],
+                "Unfinished": summary["total_remaining"],
+                "Dated nominal component shortage": sum(
+                    row["dated_shortage"]
+                    for row in current["purchase_advice"]
+                ),
+                "Fully completed by": completed_by,
+            })
+        st.dataframe(
+            pd.DataFrame(comparison), hide_index=True, width="stretch",
+            alt="Baseline and ECN simulated builds, shortages and supported completion dates",
+        )
+        st.caption(
+            "The date appears only when all demand was simulated as built "
+            "within the selected window. Dated shortages come from planned "
+            "component requirements before material-constrained scheduling; "
+            "purchase advice does not create a receipt. Capacity-only finish "
+            "estimates remain in the separate Production capacity section."
+        )
+
+        st.subheader("Simulated builds by BOM revision")
+        revision_rows = []
+        for product in ecn_summary["by_product"]:
+            for revision in ("A", "B"):
+                if revision == "B" and product["finished_sku"] != "FG-LAMP-01":
+                    continue
+                revision_rows.append({
+                    "Product SKU": product["finished_sku"],
+                    "BOM revision": revision,
+                    "Simulated builds": product["completed_by_revision"].get(
+                        revision, 0
+                    ),
+                })
+        st.dataframe(
+            pd.DataFrame(revision_rows), hide_index=True, width="stretch",
+            alt="Simulated finished units by product and BOM revision",
+        )
+        st.subheader("Outstanding demand by product")
+        st.dataframe(
+            pd.DataFrame([{
+                "Product SKU": product["finished_sku"],
+                "Product demand": product["demand"],
+                "Simulated builds": product["completed_units"],
+                "Outstanding demand": product["remaining_units"],
+                "Manual-review units": product["review_required_units"],
+            } for product in ecn_summary["by_product"]]),
+            hide_index=True, width="stretch",
+            alt="One outstanding demand balance per finished product",
+        )
+        st.caption(
+            "Outstanding demand is counted once per product. The engine does not "
+            "assign unfinished units to a BOM revision."
+        )
+        daily_rows = [{
+            "Date": row["date"],
+            "Product SKU": row["finished_sku"],
+            "Active BOM revision": row["bom_revision"],
+            "Line state": row["line_state"],
+            "Available capacity": row["available_capacity"],
+            "Demand remaining at day start": row["planned_remaining_demand"],
+            "Simulated buildable units": row["actual_buildable_units"],
+            "Unfinished after day": row["unfinished_demand"],
+            "WIP review units": row["blocked_wip_units"],
+            "Pinned-revision review units": row["blocked_revision_units"],
+            "Constraints": ", ".join(row["constraints"]) or "None",
+        } for row in ecn_plan["daily_schedule"]]
+        st.dataframe(
+            pd.DataFrame(daily_rows), hide_index=True, width="stretch",
+            alt="Daily ECN production capacity, simulated builds and unfinished demand",
+        )
+
+        st.subheader("Production-date and revision trace")
+        trace_rows = [{
+            "Date": row["date"], "Order or lot": row["order_id"],
+            "Product SKU": row["finished_sku"],
+            "Active revision": row["active_revision"],
+            "Built revision": row["bom_revision"] or "Blocked",
+            "ECN reference": row["ecn_reference"] or "None",
+            "Simulated units": row["simulated_units"],
+            "Review reason": row["block_reason"] or "None",
+        } for row in ecn_plan["revision_trace"]]
+        st.dataframe(
+            pd.DataFrame(trace_rows), hide_index=True, width="stretch",
+            alt="Simulated production dates, lots, ECN references and BOM revisions",
+        )
+
+        st.subheader("Material availability and shortages")
+        st.caption(
+            "LED-100 and LED-101 are separate stock records. SCR-120 is the "
+            "shared factory component; scenario fixtures use SCR for lamps only."
+        )
+        inventory_by_sku = {item["sku"]: item for item in ecn_inputs["inventory"]}
+        stock_rows = [{
+            "Date": row["date"], "Component SKU": row["component_sku"],
+            "Opening usable": row["opening_usable"],
+            "Reserved at snapshot": inventory_by_sku[
+                row["component_sku"]
+            ]["reserved"],
+            "Protected safety stock": inventory_by_sku[
+                row["component_sku"]
+            ]["safety_stock"],
+            "Confirmed receipts": row["confirmed_receipts"],
+            "Authorized hold": row["authorized_hold"],
+            "Simulated use": row["simulated_use"],
+            "Closing usable": row["closing_usable"],
+            "Closing physical": row["closing_physical"],
+            "Closing held": row["closing_held"],
+        } for row in ecn_plan["stock_ledger"]
+            if row["date"] >= ecn_inputs["production_start"]
+            and row["component_sku"] in {
+                "LED-100", "LED-101", "SCR-120", "SCR"
+            }]
+        st.dataframe(
+            pd.DataFrame(stock_rows), hide_index=True, width="stretch",
+            alt="Separate LED and shared-component daily stock balances",
+        )
+        st.caption(
+            "Projected physical stock includes quantities unavailable for this plan. "
+            "Snapshot reservations and protected safety stock are excluded from usable "
+            "stock; authorized ECN holds are separate and remain physically on hand. "
+            "Do not infer safety stock from the physical-minus-usable difference alone."
+        )
+        receipt_rows = [{
+            "Component SKU": row["component_sku"],
+            "Quantity": row["qty"], "Due date": row["due_date"],
+            "Confirmation": (
+                "Confirmed" if row.get("confirmed", True) else "Unconfirmed"
+            ),
+        } for row in ecn_inputs["receipts"]]
+        if receipt_rows:
+            st.dataframe(
+                pd.DataFrame(receipt_rows), hide_index=True, width="stretch",
+                alt="Fictional dated receipts and their confirmation status",
+            )
+        else:
+            st.info("No dated supplier receipts in this scenario fixture.")
+        st.caption(
+            "Only confirmed receipts enter usable stock on their due date. "
+            "Unconfirmed receipts and purchase suggestions are excluded."
+        )
+        shortage_rows = [{
+            "Date": row["date"],
+            "Component SKU": row["component_sku"],
+            "Nominal requirement": row["requirement"],
+            "Simulated coverage": row["simulated_coverage"],
+            "Unmet dated need": row["unmet_need"],
+        } for row in ecn_plan["requirement_ledger"]
+            if row["unmet_need"] > 0]
+        if shortage_rows:
+            st.dataframe(
+                pd.DataFrame(shortage_rows), hide_index=True,
+                width="stretch",
+                alt="Dated component needs unmet before material-constrained scheduling",
+            )
+        else:
+            st.info("No dated component shortages in the nominal plan.")
+        st.caption(
+            "Suggested purchase quantities are nominal dated planning advice, not "
+            "orders or confirmed receipts. They may not cover unfinished demand "
+            "carried beyond the selected planning window. FactoryFlow does not "
+            "purchase stock automatically, and simulated completion dates are not guaranteed."
+        )
+        if ecn_plan["purchase_advice"]:
+            st.dataframe(
+                pd.DataFrame(ecn_plan["purchase_advice"]).rename(columns={
+                    "component_sku": "Component SKU",
+                    "dated_shortage": "Dated shortage",
+                    "first_shortage_date": "First shortage date",
+                    "suggested_order_qty": "Suggested purchase units",
+                    "lead_days": "Supplier lead days",
+                    "latest_order_date": "Theoretical release date",
+                    "status": "Advice status",
+                }), hide_index=True, width="stretch",
+                alt="Fictional supplier pack advice based on first dated shortage",
+            )
+
+        st.subheader("Exception management")
+        review_rows = [
+            row for row in trace_rows if row["Review reason"] != "None"
+        ]
+        if review_rows:
+            st.dataframe(
+                pd.DataFrame(review_rows), hide_index=True, width="stretch",
+                alt="WIP and pinned-revision lots requiring manual review",
+            )
+        else:
+            st.info("No WIP or pinned-revision lot needs review in this run.")
+        held_rows = [
+            row for row in stock_rows
+            if row["Authorized hold"] or row["Closing held"]
+        ]
+        if held_rows:
+            st.dataframe(
+                pd.DataFrame(held_rows), hide_index=True, width="stretch",
+                alt="Authorized stock holds and retained physical inventory",
+            )
+        if ecn_plan["disposition_review"]:
+            st.dataframe(
+                pd.DataFrame(ecn_plan["disposition_review"]).rename(columns={
+                    "component_sku": "Old component SKU",
+                    "disposition": "Disposition proposal",
+                    "physical_on_hand": "Physical on hand",
+                    "held_qty": "Held units",
+                    "remaining_usable": "Remaining usable",
+                    "manual_action_required": "Manual action required",
+                    "automatic_stock_change": "Automatic stock change",
+                }), hide_index=True, width="stretch",
+                alt="Old-component disposition review without automatic stock posting",
+            )
+        if ecn_plan["old_receipt_review"]:
+            st.dataframe(
+                pd.DataFrame(ecn_plan["old_receipt_review"]),
+                hide_index=True, width="stretch",
+                alt="Old-component confirmed receipts needing supplier review",
+            )
+        st.caption(
+            "Use-up does not delay Revision B. Hold keeps physical stock but "
+            "removes usable units. Return and scrap remain proposals requiring "
+            "separate authorization and posting. WIP is never assumed reworked; "
+            "an undefined dispatch rule blocks the plan."
+        )
+    elif baseline_plan is not None:
+        st.metric(
+            "Valid Revision A baseline simulated builds",
+            baseline_plan["summary"]["total_completed"], border=True,
+        )
+        st.caption(
+            "The ECN-adjusted plan is invalid. No ECN production or stock "
+            "results are shown until the conflict or dispatch rule is resolved."
+        )
+
+st.divider()
+st.caption(
+    "FactoryFlow Phase 5C · Fictional planning simulation only · "
+    "No actual production, approval, purchasing or inventory posting"
+)
