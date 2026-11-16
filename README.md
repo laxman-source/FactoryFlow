@@ -93,6 +93,7 @@ If the `py` launcher is unavailable, use `python -m venv .venv`. Open the local 
 | `factoryflow/ecn_planning.py` | Revision-aware daily production, stock, and purchase-advice simulation |
 | `factoryflow/ecn_scenarios.py` | Fictional input records for design scenarios A-H |
 | `docs/ECN_DESIGN.md` | Phase 5A business rules and independent scenario calculations |
+| [docs/FACTORYFLOW_DEVELOPMENT_HISTORY.md](docs/FACTORYFLOW_DEVELOPMENT_HISTORY.md) | Documented development history covering Phase 1 through Phase 6B.3 |
 | `tests/` | Automated business-logic and dashboard checks, including ECN UI scenarios |
 
 ## Known limits
