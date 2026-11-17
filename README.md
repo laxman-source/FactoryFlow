@@ -76,6 +76,12 @@ The signed projected finished-goods balance is `previous projected balance + pro
 
 Production start and completion are separate input dates. This first simulation accepts only same-day start and completion and rejects a later completion rather than silently assuming a manufacturing lead time. It does not calculate ATP, select an ECN revision, purchase materials, reschedule production, post actual output, or authorize a plan. The policies and results are not practitioner-approved manufacturing commitments.
 
+### MPS-3A: dated proposed material requirements
+
+`factoryflow/mps_materials.py` provides `calculate_mps_materials`, a separate simulation-only projection from `ProposedMPSCompletion` records. It uses the approved direct BOM revision active on **production start**, retains the separate proposed completion date, and requires the current MPS foundation's same-day start/completion assumption. It groups gross component needs by component and start date, then runs `calculate_material_timeline` once for the entire horizon. That ledger counts usable opening stock once, includes only confirmed receipts after the snapshot, and leaves unmet needs on their original dates. Shared components use one chronological stock pool.
+
+The output distinguishes proposed MPS units, gross component requirements, confirmed receipts, nominal component coverage, dated shortages, cumulative outstanding requirements, and projected closing usable component balances. Nominal coverage is **not** complete-set feasibility, a material issue, or actual production. A later receipt does not revise an earlier shortage or move an MPS date. Purchase advice is neither generated nor counted as supply. Approved ECN conflicts, missing revision/component masters, supplied released or WIP lots without an MPS lot linkage, and stock holds that this integration cannot model stop the projection for manual review. Draft ECNs do not activate a new revision. No MRP, ECN, capacity, or dashboard API is changed.
+
 ## Run and test on Windows
 
 Install Python 3.11 or newer, open PowerShell in this folder, and run:
@@ -104,6 +110,7 @@ If the `py` launcher is unavailable, use `python -m venv .venv`. Open the local 
 | `factoryflow/ecn_scenarios.py` | Fictional input records for design scenarios A-H |
 | `factoryflow/mps.py` | Provisional daily finished-goods MPS projection |
 | `factoryflow/mps_data.py` | Fictional two-product MPS inputs |
+| `factoryflow/mps_materials.py` | Dated, revision-aware nominal component requirements from MPS proposals |
 | `docs/ECN_DESIGN.md` | Phase 5A business rules and independent scenario calculations |
 | [docs/FACTORYFLOW_DEVELOPMENT_HISTORY.md](docs/FACTORYFLOW_DEVELOPMENT_HISTORY.md) | Documented development history covering Phase 1 through Phase 6B.3 |
 | `tests/` | Automated business-logic and dashboard checks, including ECN UI scenarios |
