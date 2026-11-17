@@ -6,7 +6,7 @@ FactoryFlow is a local learning project with fictional smart desk lamp and wirel
 
 ### Material Requirements Planning (MRP)
 
-The Master Production Schedule (MPS) is the requested finished-product quantity on one shared production start date. A one-level Bill of Materials (BOM) multiplies that demand by the component quantity per finished unit. Needs for a shared component are added together.
+In the legacy single-date MRP view, the requested finished-product quantity on one shared production start date is called an MPS input. The separate provisional dated MPS foundation below does not change this view. A one-level Bill of Materials (BOM) multiplies that demand by the component quantity per finished unit. Needs for a shared component are added together.
 
 For each component:
 
@@ -66,6 +66,16 @@ Open **ECN simulation** below the existing planning views. The main MRP, capacit
 
 Suggested purchase quantities are nominal dated planning advice. They do not create confirmed receipts or cover every possible backlog carried beyond the selected window; simulated completion dates are not guaranteed. FactoryFlow does not purchase stock automatically. A WIP or pinned-revision conflict stays open for manual review. The UI does not approve an ECN, issue a purchase order, release WIP, or post a return or scrap transaction. Use-up does not postpone Revision B. For a rejected approval, hold, or missing lot dispatch rule, the ECN view shows the engine error and withholds a final adjusted schedule.
 
+## MPS-1/MPS-2: provisional dated MPS foundation
+
+`factoryflow/mps.py` provides a pure, simulation-only daily finished-goods projection. It accepts dated firm customer orders, dated forecasts, explicit opening finished-goods stock, and proposed MPS completions for each finished SKU. `factoryflow/mps_data.py` contains a fictional two-product example. These inputs are separate from component inventory and from the existing MRP, ECN, capacity and Streamlit flows.
+
+**Provisional same-bucket rule:** firm orders consume forecast for the same SKU and planning date only. `forecast_consumed = min(firm_orders, forecast)`; `effective_demand = firm_orders + forecast - forecast_consumed`. A planner must validate the consumption window before operational use.
+
+The signed projected finished-goods balance is `previous projected balance + proposed MPS completions - effective demand`. A negative projection remains negative; `unmet_demand = max(0, -projected balance)` reports outstanding demand without treating it as physical negative stock or subtracting it again on the next date. The opening stock is a supplied physical snapshot; later balances include proposed, unconfirmed completions.
+
+Production start and completion are separate input dates. This first simulation accepts only same-day start and completion and rejects a later completion rather than silently assuming a manufacturing lead time. It does not calculate ATP, select an ECN revision, purchase materials, reschedule production, post actual output, or authorize a plan. The policies and results are not practitioner-approved manufacturing commitments.
+
 ## Run and test on Windows
 
 Install Python 3.11 or newer, open PowerShell in this folder, and run:
@@ -92,6 +102,8 @@ If the `py` launcher is unavailable, use `python -m venv .venv`. Open the local 
 | `factoryflow/ecn.py` | ECN records, approval/cancellation safeguards, and BOM revision selection |
 | `factoryflow/ecn_planning.py` | Revision-aware daily production, stock, and purchase-advice simulation |
 | `factoryflow/ecn_scenarios.py` | Fictional input records for design scenarios A-H |
+| `factoryflow/mps.py` | Provisional daily finished-goods MPS projection |
+| `factoryflow/mps_data.py` | Fictional two-product MPS inputs |
 | `docs/ECN_DESIGN.md` | Phase 5A business rules and independent scenario calculations |
 | [docs/FACTORYFLOW_DEVELOPMENT_HISTORY.md](docs/FACTORYFLOW_DEVELOPMENT_HISTORY.md) | Documented development history covering Phase 1 through Phase 6B.3 |
 | `tests/` | Automated business-logic and dashboard checks, including ECN UI scenarios |
