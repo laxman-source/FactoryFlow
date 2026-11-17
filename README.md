@@ -90,6 +90,33 @@ For a product with an unambiguous allocation, simulated buildable units are limi
 
 Approved BOM revisions follow the MPS-3A production-start rule. A supplied new lot can be traced when one lot per SKU exactly matches the total proposed units; multiple ready lots need a reviewed dispatch link. Released/WIP lots and unsupported stock holds stop the projection for manual review. This milestone adds no purchasing, production rescheduling, ATP, delivery commitment, actual transaction, or dashboard change.
 
+### MPS-3C: integrated simulation dashboard
+
+The **MPS simulation** section below the existing views uses `calculate_mps` and
+`calculate_mps_feasibility`; the latter reuses the dated nominal material plan.
+Select a fictional scenario in the sidebar: base plan, material shortage,
+capacity restriction, shared-stock contention, approved BOM revision, or
+unsupported WIP. The component opening snapshot is dated December 1; confirmed
+receipts before that date are included once in opening stock, while the December
+3 receipt remains dated.
+
+The dashboard shows dated orders, forecast consumption and effective demand once
+per SKU/date; proposed production and provisional finished-goods balances;
+revision-aware gross requirements and a shared nominal component ledger;
+simulated whole-unit output and capacity consumption; and planning exceptions.
+Proposed production, nominal component coverage, simulated builds, known unbuilt
+units, and unresolved units have separate labels. Conditional component balances
+are withheld from numeric stock display. Proposed completions never become
+physical finished-goods receipts or actual production in this view.
+
+Same-bucket forecast consumption, same-day starts/completions, direct BOMs,
+confirmed receipt timing, weekday dedicated-line capacity, and ECN selection by
+production start remain provisional simulation policies. The screen does not
+resolve WIP, allocate scarce shared parts, approve plans, reschedule work, buy
+stock, or promise customer delivery. A manufacturing practitioner must validate
+the forecast-consumption window, opening-snapshot provenance, stock protection,
+BOM effectivity, line rates, and dispatch rules before operational use.
+
 ## Run and test on Windows
 
 Install Python 3.11 or newer, open PowerShell in this folder, and run:
@@ -120,6 +147,8 @@ If the `py` launcher is unavailable, use `python -m venv .venv`. Open the local 
 | `factoryflow/mps_data.py` | Fictional two-product MPS inputs |
 | `factoryflow/mps_materials.py` | Dated, revision-aware nominal component requirements from MPS proposals |
 | `factoryflow/mps_feasibility.py` | Whole-unit MPS feasibility and simulated component-use ledger |
+| `factoryflow/mps_dashboard_scenarios.py` | Fictional selectable MPS dashboard inputs |
+| `factoryflow/mps_dashboard_view.py` | Read-only Streamlit MPS presentation and exceptions |
 | `docs/ECN_DESIGN.md` | Phase 5A business rules and independent scenario calculations |
 | [docs/FACTORYFLOW_DEVELOPMENT_HISTORY.md](docs/FACTORYFLOW_DEVELOPMENT_HISTORY.md) | Documented development history covering Phase 1 through Phase 6B.3 |
 | `tests/` | Automated business-logic and dashboard checks, including ECN UI scenarios |

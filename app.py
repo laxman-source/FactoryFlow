@@ -24,6 +24,7 @@ from factoryflow.ecn import (
 )
 from factoryflow.ecn_planning import calculate_ecn_plan
 from factoryflow.ecn_scenarios import SCENARIO_NAMES, SCENARIO_NOTES, scenario_inputs
+from factoryflow.mps_dashboard_view import render_mps_dashboard
 
 
 def parse_downtime_dates(text, line_name):
@@ -1054,6 +1055,8 @@ if ecn_inputs is not None:
             "The ECN-adjusted plan is invalid. No ECN production or stock "
             "results are shown until the conflict or dispatch rule is resolved."
         )
+
+render_mps_dashboard()
 
 st.divider()
 st.caption(
