@@ -82,6 +82,14 @@ Production start and completion are separate input dates. This first simulation 
 
 The output distinguishes proposed MPS units, gross component requirements, confirmed receipts, nominal component coverage, dated shortages, cumulative outstanding requirements, and projected closing usable component balances. Nominal coverage is **not** complete-set feasibility, a material issue, or actual production. A later receipt does not revise an earlier shortage or move an MPS date. Purchase advice is neither generated nor counted as supply. Approved ECN conflicts, missing revision/component masters, supplied released or WIP lots without an MPS lot linkage, and stock holds that this integration cannot model stop the projection for manual review. Draft ECNs do not activate a new revision. No MRP, ECN, capacity, or dashboard API is changed.
 
+### MPS-3B.1: whole-unit material and capacity feasibility
+
+`factoryflow/mps_feasibility.py` adds `calculate_mps_feasibility`. It retains the MPS-3A **nominal material plan** as a separate result and computes a second ledger that deducts components only for simulated complete finished units. Each proposed date uses the existing daily dedicated-line capacity rules, including supported overtime and full-day downtime. Confirmed receipts enter the shared usable-component pool on their validated dates. Unbuilt units and unused capacity do not move to another date.
+
+For a product with an unambiguous allocation, simulated buildable units are limited by its proposed MPS quantity, that day's line capacity, and whole component sets. The result separates capacity-unbuilt, material-unbuilt and simulated buildable units; these are **not actual production or finished-goods receipts**. If two products could individually build but their combined claim on a shared component exceeds available stock, the engine does not apply the legacy scheduler's ascending-SKU priority. It reports the shared component, available quantity, competing SKUs and their individually possible component claims after capacity and material limits, and marks affected build quantities **unresolved** (`simulated_buildable_units=None`). No material or capacity is consumed for those unresolved units. Later plans depending on uncertain stock remain unresolved; their displayed stock balance is explicitly conditional. Disjoint products can still be simulated.
+
+Approved BOM revisions follow the MPS-3A production-start rule. A supplied new lot can be traced when one lot per SKU exactly matches the total proposed units; multiple ready lots need a reviewed dispatch link. Released/WIP lots and unsupported stock holds stop the projection for manual review. This milestone adds no purchasing, production rescheduling, ATP, delivery commitment, actual transaction, or dashboard change.
+
 ## Run and test on Windows
 
 Install Python 3.11 or newer, open PowerShell in this folder, and run:
@@ -111,6 +119,7 @@ If the `py` launcher is unavailable, use `python -m venv .venv`. Open the local 
 | `factoryflow/mps.py` | Provisional daily finished-goods MPS projection |
 | `factoryflow/mps_data.py` | Fictional two-product MPS inputs |
 | `factoryflow/mps_materials.py` | Dated, revision-aware nominal component requirements from MPS proposals |
+| `factoryflow/mps_feasibility.py` | Whole-unit MPS feasibility and simulated component-use ledger |
 | `docs/ECN_DESIGN.md` | Phase 5A business rules and independent scenario calculations |
 | [docs/FACTORYFLOW_DEVELOPMENT_HISTORY.md](docs/FACTORYFLOW_DEVELOPMENT_HISTORY.md) | Documented development history covering Phase 1 through Phase 6B.3 |
 | `tests/` | Automated business-logic and dashboard checks, including ECN UI scenarios |
